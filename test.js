@@ -40,12 +40,12 @@ t('three fake sessions: prefill and suggestion follow the latest session', () =>
   assert.equal(s.action, 'down'); assert.equal(s.altKg, 21.5);
   const rowing = w.exercises.find(e => e.timed); assert.ok(rowing); assert.equal(w.sets.find(x => x.exerciseId === rowing.id).seconds, 300);
 });
-t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days.length, 3); assert.equal(D.days[0].items.filter(i => i.enabled).length, 8);
+t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days.length, 3); assert.equal(D.days[0].items.filter(i => i.enabled).length, 9);
   assert.equal(D.days[2].items.filter(i => !i.enabled).length, 4); const rdl = D.exercises.find(e => e.name === 'Romanian deadlift'); assert.equal(rdl.repMin, 6); assert.equal(rdl.repMax, 8);
   const pu = D.exercises.find(e => e.name === 'Assisted pull-up'); assert.ok(pu.assisted); assert.equal(pu.repMax, 10); assert.equal(D.exercises.find(e => e.name === 'Cross crunch').repMax, 20); });
 t('migrate v1 updates untouched ranges, keeps edited ones', () => { const old = legacyData(); old.version = 1; old.exercises.forEach(e => { e.assisted = false; e.repMin = e.name.includes('deadlift') ? 6 : 10; e.repMax = e.name.includes('deadlift') ? 8 : 14; });
   const edited = old.exercises.find(e => e.name === 'Cable flyes'); edited.repMin = 8; edited.repMax = 12; GT.migrate(old);
-  assert.equal(old.version, 4); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted);
+  assert.equal(old.version, 5); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted);
   assert.ok(GT.newWorkout(old, old.days[2]).exercises.some(e => e.name === 'Dead bug (per side)')); });
 
 // Independent record of the shipped v2 layout, including its disabled items.
@@ -80,7 +80,7 @@ t('major regions receive work on at least two days; missing movement types are e
     assert.ok(days.some(es => es.some(e => e.name === name)), name);
   }
   const totals = days.map(es => es.filter(e => !e.timed).reduce((s, e) => s + e.sets, 0));
-  assert.deepEqual(totals, [21, 18, 24]); assert.ok(totals.reduce((s, n) => s + n, 0) < 72);
+  assert.deepEqual(totals, [24, 21, 24]); assert.ok(totals.reduce((s, n) => s + n, 0) < 72);
   days.forEach(es => { assert.equal(es.filter(e => e.timed).length, 1); assert.equal(new Set(es.map(e => e.id)).size, es.length); });
 });
 t('v2 migration preserves history, active workout, exercise IDs and custom prescriptions', () => {
@@ -93,7 +93,7 @@ t('v2 migration preserves history, active workout, exercise IDs and custom presc
   const snapshots = JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]);
   const exercises = JSON.stringify(d.exercises), ids = d.days.map(day => day.id);
   GT.migrate(d);
-  assert.equal(d.version, 4); assert.equal(layout(d), layout(GT.emptyData()));
+  assert.equal(d.version, 5); assert.equal(layout(d), layout(GT.emptyData()));
   for (const before of JSON.parse(exercises)) { const after = d.exercises.find(e => e.id === before.id); for (const key of Object.keys(before)) assert.deepEqual(after[key], before[key]); }
   assert.deepEqual(d.days.map(day => day.id), ids);
   assert.equal(JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]), snapshots);
@@ -115,7 +115,7 @@ t('edited layouts, renamed or archived exercises, and added or removed days surv
   ];
   for (const edit of edits) {
     const d = legacyData(); edit(d); const before = JSON.stringify([d.days, d.exercises]);
-    GT.migrate(d); const [days, exercises] = JSON.parse(before); assert.equal(JSON.stringify(d.days), JSON.stringify(days)); for (const ex of exercises) { const after = d.exercises.find(e => e.id === ex.id); for (const key of Object.keys(ex)) assert.deepEqual(after[key], ex[key]); } assert.equal(d.version, 4);
+    GT.migrate(d); const [days, exercises] = JSON.parse(before); assert.equal(JSON.stringify(d.days), JSON.stringify(days)); for (const ex of exercises) { const after = d.exercises.find(e => e.id === ex.id); for (const key of Object.keys(ex)) assert.deepEqual(after[key], ex[key]); } assert.equal(d.version, 5);
   }
 });
 t('existing dead bug library entry is reused without overwriting it', () => {
@@ -130,6 +130,16 @@ t('history template matches the enabled program and set counts', () => {
   const rows = GT.parseHistory(csv.replace(/^,/gm, '2026-09-01,'));
   const expected = d.days.flatMap((day, i) => GT.newWorkout(d, day).exercises.map(e => [e.name, `Day ${i + 1}`, e.sets, e.timed ? 300 : 0]));
   assert.equal(JSON.stringify(rows.map(r => [r.exercise, r.day, r.sets.length, r.sets[0].seconds])), JSON.stringify(expected));
+});
+
+t('v5 relayout: untouched v4 layout gains row, sumo and flyes; customised layout is kept', () => {
+  const d4 = GT.defaultProgram(4); const d = { version: 4, exercises: d4.exercises.map(e => ({ ...e })), days: d4.days.map(x => ({ ...x, items: x.items.map(i => ({ ...i })) })), workouts: [], activeWorkout: null, bodyweight: [], settings: {} };
+  const rdlId = d.exercises.find(e => e.name === 'Romanian deadlift').id; d.exercises.find(e => e.name === 'Romanian deadlift').sets = 4;
+  GT.migrate(d); const on = (i) => d.days[i].items.filter(x => x.enabled).map(x => d.exercises.find(e => e.id === x.exerciseId).name);
+  assert.equal(d.version, 5); assert.ok(on(0).includes('Smith machine bent-over row')); assert.ok(on(1).includes('Sumo deadlift')); assert.ok(on(2).includes('Cable flyes') && !on(2).includes('Incline lying single-arm tricep extension'));
+  assert.equal(d.exercises.find(e => e.name === 'Romanian deadlift').id, rdlId); assert.equal(d.exercises.find(e => e.name === 'Romanian deadlift').sets, 4);
+  const c = { version: 4, exercises: d4.exercises.map(e => ({ ...e })), days: d4.days.map(x => ({ ...x, items: x.items.map(i => ({ ...i })) })), workouts: [], activeWorkout: null, bodyweight: [], settings: {} };
+  c.days[1].items.pop(); GT.migrate(c); assert.equal(c.version, 5); assert.ok(!c.days[0].items.some(x => x.enabled && c.exercises.find(e => e.id === x.exerciseId).name === 'Smith machine bent-over row'));
 });
 
 // ---- History import (CSV / JSON) ----
@@ -180,10 +190,10 @@ function bootApp(saved, failSave = false) {
 }
 t('saved default migrates on app boot, persists once, and renders working-set totals', () => {
   const app = bootApp(legacyData());
-  assert.equal(app.stored().version, 4); assert.equal(layout(app.stored()), layout(GT.emptyData())); assert.equal(app.writes(), 1);
+  assert.equal(app.stored().version, 5); assert.equal(layout(app.stored()), layout(GT.emptyData())); assert.equal(app.writes(), 1);
   vm.runInContext("go('program')", app.context);
   const content = app.elements.get('#view').innerHTML;
-  for (const count of [21, 18, 24]) assert.ok(content.includes(`${count} working sets`));
+  for (const count of [24, 21, 24]) assert.ok(content.includes(`${count} working sets`));
   vm.runInContext("go('dayEdit', {dayEditId: D.days[2].id})", app.context);
   assert.ok(app.elements.get('#view').innerHTML.includes('Dead bug (per side)'));
   vm.runInContext("startWorkout(D.days[2].id)", app.context);
@@ -196,7 +206,7 @@ t('migration save failure retains loaded history and the reviewed program in mem
   const d = legacyData(); const past = GT.newWorkout(d, d.days[0]); past.endedAt = Date.now(); d.workouts.push(past);
   const app = bootApp(d, true);
   assert.equal(vm.runInContext('D.workouts[0].id', app.context), past.id);
-  assert.equal(vm.runInContext('D.version', app.context), 4);
+  assert.equal(vm.runInContext('D.version', app.context), 5);
   assert.equal(app.stored().version, 2);
 });
 
@@ -257,7 +267,7 @@ t('session options respect the time estimate, valid sets and enabled exercises w
     plan.exercises.forEach(e => {assert.ok(e.sets >= 1); assert.equal(e.sets, e.plannedSets); assert.ok(day.items.some(i => i.enabled && i.exerciseId === e.id));});
   }
   assert.equal(JSON.stringify(d), before);
-  const full = GT.sessionPlan(d, d.days[0]); assert.equal(full.exercises.filter(e=>!e.timed).reduce((sum,e)=>sum+e.sets,0),21);
+  const full = GT.sessionPlan(d, d.days[0]); assert.equal(full.exercises.filter(e=>!e.timed).reduce((sum,e)=>sum+e.sets,0),24);
   const short = GT.sessionPlan(d, d.days[0], {sessionMinutes:30});
   for (const movement of ['push', 'pull']) assert.ok(short.exercises.some(e => e.movement === movement));
   assert.ok(short.exercises.some(e => ['squat', 'hinge'].includes(e.movement)));
@@ -266,7 +276,7 @@ t('goal options add at most one priority set, cap it at four, and lengthen main-
   const d = GT.emptyData(), day = d.days[0], bench = d.exercises.find(e => e.name === 'Dumbbell bench press');
   let plan = GT.sessionPlan(d, day, {goal:'muscle', priorityRegion:'chest'});
   assert.equal(plan.exercises.find(e => e.id === bench.id).sets, 4);
-  assert.equal(plan.exercises.reduce((sum,e)=>sum+e.sets,0),23); // 21 work + 1 added + 1 warm-up.
+  assert.equal(plan.exercises.reduce((sum,e)=>sum+e.sets,0),26); // 24 work + 1 added + 1 warm-up.
   bench.sets=4; plan = GT.sessionPlan(d,day,{goal:'muscle',priorityRegion:'chest'}); assert.equal(plan.exercises.find(e=>e.id===bench.id).sets,4);
   assert.equal(GT.sessionPlan(d,day,{goal:'strength'}).exercises.find(e=>e.id===bench.id).restSec,150);
 });
@@ -301,7 +311,7 @@ t('weekly coverage reports unclassified exercises instead of guessing from upper
   const c=GT.weekCoverage(d,now); assert.equal(c.unclassified,1);assert.equal(c.totalSets,1);assert.ok(c.regions.every(r=>r.direct===0&&r.indirect===0));
 });
 t('v3 migration enriches the library without reinterpreting old loads or modifying active/history snapshots', () => {
-  const d=Object.assign(GT.emptyData(), GT.defaultProgram(3)); d.version=3;
+  const d=Object.assign(GT.emptyData(), GT.defaultProgram(3)); d.version=3; d.days[1].items.pop(); // customised day: v5 relayout must not apply
   const bench=d.exercises.find(e=>e.name==='Dumbbell bench press');
   const w={id:'past',startedAt:1,endedAt:2,exercises:[{id:bench.id,name:bench.name,sets:3}],sets:[{exerciseId:bench.id,weightKg:40,reps:10,done:true}]};
   d.workouts=[w];d.activeWorkout=JSON.parse(JSON.stringify(w));d.activeWorkout.id='active';d.activeWorkout.endedAt=null;

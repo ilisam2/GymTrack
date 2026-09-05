@@ -1,5 +1,5 @@
 // Bump CACHE when index.html changes so installed phones pick up the new version.
-const CACHE = 'gymtrack-v5';
+const CACHE = 'gymtrack-v6';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './history-template.csv'];
 
 self.addEventListener('install', (e) => {
