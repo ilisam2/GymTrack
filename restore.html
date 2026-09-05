@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow"><title>GymTrack restore</title>
+<style>body{margin:0;padding:24px;background:#111318;color:#e8eaf0;font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}button{font:inherit;padding:14px 20px;border-radius:12px;border:0;background:#4f8cff;color:#fff;font-weight:600;width:100%;margin-top:16px}a{color:#4f8cff}</style></head>
+<body><h2>Restore a backup</h2><p id="msg">Loading…</p><button id="go" hidden>Replace my data with this backup</button><p><a href="./index.html">Back to GymTrack</a></p>
+<script>
+// Usage: restore.html?file=backups/name.json  (same-origin files only). Replaces everything in this browser.
+const KEY = 'gymtrack.v1', msg = document.getElementById('msg'), go = document.getElementById('go');
+const file = new URLSearchParams(location.search).get('file') || '';
+(async () => {
+  try {
+    if (!file || /^([a-z]+:)?\/\//i.test(file) || file.includes('..')) throw new Error('No backup file given.');
+    const d = await (await fetch(file, { cache: 'no-store' })).json();
+    if (!Array.isArray(d.exercises) || !Array.isArray(d.days) || !Array.isArray(d.workouts)) throw new Error('Not a GymTrack backup.');
+    let cur = null; try { cur = JSON.parse(localStorage.getItem(KEY)); } catch (e) { }
+    const curN = cur && cur.workouts ? cur.workouts.length : 0;
+    msg.textContent = `Backup has ${d.workouts.length} workouts. This browser currently has ${curN}. Restoring replaces everything here.`;
+    go.hidden = false;
+    go.onclick = () => { localStorage.setItem(KEY, JSON.stringify(d)); location.replace('./index.html'); };
+  } catch (e) { msg.textContent = 'Could not load backup: ' + e.message; }
+})();
+</script></body></html>
