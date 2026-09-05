@@ -1,4 +1,4 @@
-// Run: node test.js  — loads the pure-logic block from index.html and checks the progression rule.
+// Run: node test.js — progression, program balance, saved-data migration and history import.
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const html = fs.readFileSync(__dirname + '/index.html', 'utf8');
 const core = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
@@ -40,13 +40,97 @@ t('three fake sessions: prefill and suggestion follow the latest session', () =>
   assert.equal(s.action, 'down'); assert.equal(s.altKg, 21.5);
   const rowing = w.exercises.find(e => e.timed); assert.ok(rowing); assert.equal(w.sets.find(x => x.exerciseId === rowing.id).seconds, 300);
 });
-t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days.length, 3); assert.equal(D.days[0].items.filter(i => i.enabled).length, 9);
-  assert.equal(D.days[2].items.filter(i => !i.enabled).length, 3); const rdl = D.exercises.find(e => e.name === 'Romanian deadlift'); assert.equal(rdl.repMin, 6); assert.equal(rdl.repMax, 8);
+t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days.length, 3); assert.equal(D.days[0].items.filter(i => i.enabled).length, 8);
+  assert.equal(D.days[2].items.filter(i => !i.enabled).length, 4); const rdl = D.exercises.find(e => e.name === 'Romanian deadlift'); assert.equal(rdl.repMin, 6); assert.equal(rdl.repMax, 8);
   const pu = D.exercises.find(e => e.name === 'Assisted pull-up'); assert.ok(pu.assisted); assert.equal(pu.repMax, 10); assert.equal(D.exercises.find(e => e.name === 'Cross crunch').repMax, 20); });
-t('migrate v1 → v2 updates untouched ranges, keeps edited ones', () => { const old = GT.emptyData(); old.version = 1; old.exercises.forEach(e => { e.assisted = false; e.repMin = e.name.includes('deadlift') ? 6 : 10; e.repMax = e.name.includes('deadlift') ? 8 : 14; });
+t('migrate v1 updates untouched ranges, keeps edited ones', () => { const old = legacyData(); old.version = 1; old.exercises.forEach(e => { e.assisted = false; e.repMin = e.name.includes('deadlift') ? 6 : 10; e.repMax = e.name.includes('deadlift') ? 8 : 14; });
   const edited = old.exercises.find(e => e.name === 'Cable flyes'); edited.repMin = 8; edited.repMax = 12; GT.migrate(old);
-  assert.equal(old.version, 2); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted); });
-console.log(`\n${n} tests passed`);
+  assert.equal(old.version, 3); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted);
+  assert.ok(GT.newWorkout(old, old.days[2]).exercises.some(e => e.name === 'Dead bug (per side)')); });
+
+// Independent record of the shipped v2 layout, including its disabled items.
+function legacyData() {
+  const d = GT.emptyData(); d.version = 2;
+  d.exercises = d.exercises.filter(e => e.name !== 'Dead bug (per side)');
+  const layouts = [
+    [['Rowing (warm-up)', 'Romanian deadlift', 'Barbell front squat', 'Barbell hip thrust', 'Dumbbell bench press', 'Underhand lat pulldown', 'Smith machine bent-over row', 'Dumbbell bench bicep curl', 'Lying single dumbbell tricep extension'], ['Face pull']],
+    [['Rowing (warm-up)', 'Sumo deadlift', 'Dumbbell hamstring curl', 'Barbell back squat', 'Dumbbell raised lunge', 'Barbell hip thrust', 'Cable donkey kickbacks', 'Cross crunch', 'Machine abdominal crunch'], ['Standing calf raise', 'Pallof press']],
+    [['Rowing (warm-up)', 'Dumbbell incline close-grip hammer press', 'Cable flyes', 'Assisted pull-up', 'Chest-supported low row', 'Dumbbell upright row', 'Dumbbell bench hammer curl', 'Incline lying single-arm tricep extension', 'Hanging leg raise'], ['Overhead press', 'Lateral raise', 'Face pull']],
+  ];
+  d.days.forEach((day, i) => { day.items = layouts[i].flatMap((names, group) => names.map(name => ({ exerciseId: d.exercises.find(e => e.name === name).id, enabled: group === 0 }))); });
+  return d;
+}
+const layout = d => JSON.stringify(d.days.map(day => ({ name: day.name, items: day.items.map(i => [d.exercises.find(e => e.id === i.exerciseId).name, i.enabled]) })));
+
+t('major regions receive work on at least two days; missing movement types are enabled', () => {
+  const d = GT.emptyData(), days = d.days.map(day => GT.newWorkout(d, day).exercises);
+  const regions = {
+    quads: ['Barbell front squat', 'Barbell back squat', 'Dumbbell raised lunge'],
+    glutes: ['Romanian deadlift', 'Barbell back squat', 'Barbell hip thrust'],
+    hamstrings: ['Romanian deadlift', 'Dumbbell hamstring curl'],
+    chest: ['Dumbbell bench press', 'Dumbbell incline close-grip hammer press'],
+    back: ['Underhand lat pulldown', 'Assisted pull-up', 'Chest-supported low row'],
+    shoulders: ['Dumbbell bench press', 'Face pull', 'Overhead press', 'Lateral raise'],
+    biceps: ['Underhand lat pulldown', 'Assisted pull-up', 'Dumbbell bench hammer curl'],
+    triceps: ['Dumbbell bench press', 'Overhead press', 'Incline lying single-arm tricep extension'],
+    calves: ['Standing calf raise'], core: ['Pallof press', 'Machine abdominal crunch', 'Dead bug (per side)'],
+  };
+  for (const [region, names] of Object.entries(regions)) assert.ok(days.filter(es => es.some(e => names.includes(e.name))).length >= 2, region);
+  for (const name of ['Overhead press', 'Lateral raise', 'Face pull', 'Standing calf raise', 'Pallof press', 'Dead bug (per side)', 'Dumbbell raised lunge', 'Dumbbell hamstring curl', 'Chest-supported low row']) {
+    assert.ok(days.some(es => es.some(e => e.name === name)), name);
+  }
+  const totals = days.map(es => es.filter(e => !e.timed).reduce((s, e) => s + e.sets, 0));
+  assert.deepEqual(totals, [21, 18, 24]); assert.ok(totals.reduce((s, n) => s + n, 0) < 72);
+  days.forEach(es => { assert.equal(es.filter(e => e.timed).length, 1); assert.equal(new Set(es.map(e => e.id)).size, es.length); });
+});
+t('v2 migration preserves history, active workout, exercise IDs and custom prescriptions', () => {
+  const d = legacyData(); const ex = d.exercises.find(e => e.name === 'Dumbbell bench press');
+  ex.sets = 4; ex.repMin = 8; ex.repMax = 12;
+  const past = GT.newWorkout(d, d.days[0]); past.endedAt = Date.now();
+  past.sets.filter(s => s.exerciseId === ex.id).forEach(s => { s.done = true; s.weightKg = 20; s.reps = 11; });
+  d.workouts.push(past); d.activeWorkout = GT.newWorkout(d, d.days[2]);
+  d.bodyweight.push({ date: '2026-09-01', kg: 60 }); d.settings.restSec = 120;
+  const snapshots = JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]);
+  const exercises = JSON.stringify(d.exercises), ids = d.days.map(day => day.id);
+  GT.migrate(d);
+  assert.equal(d.version, 3); assert.equal(layout(d), layout(GT.emptyData()));
+  assert.equal(JSON.stringify(d.exercises.slice(0, -1)), exercises);
+  assert.deepEqual(d.days.map(day => day.id), ids);
+  assert.equal(JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]), snapshots);
+  const next = GT.newWorkout(d, d.days[0]).sets.filter(s => s.exerciseId === ex.id);
+  assert.equal(next.length, 4); assert.equal(next[0].weightKg, 20); assert.equal(next[0].reps, 11);
+  const once = JSON.stringify(d); GT.migrate(d); assert.equal(JSON.stringify(d), once);
+});
+t('edited layouts, renamed or archived exercises, and added or removed days survive migration', () => {
+  const edits = [
+    d => { d.days[0].items[0].enabled = false; },
+    d => { d.days[1].items.reverse(); },
+    d => { d.days[2].name = 'My upper day'; },
+    d => { d.days[0].items.pop(); },
+    d => { d.days.push({ id: 'custom', name: 'Custom', items: [] }); },
+    d => { d.days.pop(); },
+    d => { d.days = []; },
+    d => { d.exercises[0].name = 'Bike warm-up'; },
+    d => { d.exercises[0].archived = true; },
+  ];
+  for (const edit of edits) {
+    const d = legacyData(); edit(d); const before = JSON.stringify([d.days, d.exercises]);
+    GT.migrate(d); assert.equal(JSON.stringify([d.days, d.exercises]), before); assert.equal(d.version, 3);
+  }
+});
+t('existing dead bug library entry is reused without overwriting it', () => {
+  const d = legacyData(), dead = { ...GT.emptyData().exercises.find(e => e.name === 'Dead bug (per side)'), sets: 2 };
+  d.exercises.push(dead); GT.migrate(d);
+  assert.equal(d.exercises.filter(e => e.name === dead.name).length, 1);
+  assert.ok(d.days[2].items.some(i => i.enabled && i.exerciseId === dead.id)); assert.equal(dead.sets, 2);
+});
+t('history template matches the enabled program and set counts', () => {
+  const d = GT.emptyData(), csv = fs.readFileSync(__dirname + '/history-template.csv', 'utf8');
+  assert.equal(GT.parseHistory(csv).length, 0); // Empty dates must not import phantom sessions.
+  const rows = GT.parseHistory(csv.replace(/^,/gm, '2026-09-01,'));
+  const expected = d.days.flatMap((day, i) => GT.newWorkout(d, day).exercises.map(e => [e.name, `Day ${i + 1}`, e.sets, e.timed ? 300 : 0]));
+  assert.equal(JSON.stringify(rows.map(r => [r.exercise, r.day, r.sets.length, r.sets[0].seconds])), JSON.stringify(expected));
+});
 
 // ---- History import (CSV / JSON) ----
 t('CSV with sets count → one workout per date, identical sets', () => {
@@ -77,4 +161,42 @@ t('CSV export round-trips', () => {
   const D2 = GT.emptyData(); const res = GT.importHistory(D2, GT.parseHistory(csv)); assert.equal(res.sets, 2); assert.equal(D2.workouts[0].sets[1].setIndex, 1);
 });
 t('bad input throws a readable error', () => { assert.throws(() => GT.parseHistory('just some text\nmore'), /header/); });
-console.log(`\n${n} tests passed (with import)`);
+
+// Boot the actual application scripts against synthetic storage and a minimal DOM.
+// This verifies migration and generated UI text without accessing a user's browser data.
+function bootApp(saved, failSave = false) {
+  const elements = new Map(), events = {};
+  const element = () => ({ innerHTML: '', classList: { add() {}, remove() {}, toggle() {} }, setAttribute() {} });
+  const document = { documentElement: element(), body: element(), querySelectorAll: () => [],
+    querySelector: sel => { if (!elements.has(sel)) elements.set(sel, element()); return elements.get(sel); },
+    addEventListener: (type, fn) => { events[type] = fn; } };
+  let stored = JSON.stringify(saved), writes = 0;
+  const context = vm.createContext({ document, navigator: {}, console: { error() {} },
+    localStorage: { getItem: () => stored, setItem: (key, value) => { if (failSave) throw Error('Storage full'); stored = value; writes++; } },
+    window: { scrollTo() {}, addEventListener() {} }, matchMedia: () => ({ matches: true, addEventListener() {} }),
+    clearInterval() {}, setInterval() {}, clearTimeout() {}, setTimeout() {} });
+  for (const script of html.matchAll(/<script(?: id="core")?>([\s\S]*?)<\/script>/g)) vm.runInContext(script[1], context);
+  return { context, elements, events, stored: () => JSON.parse(stored), writes: () => writes };
+}
+t('saved default migrates on app boot, persists once, and renders working-set totals', () => {
+  const app = bootApp(legacyData());
+  assert.equal(app.stored().version, 3); assert.equal(layout(app.stored()), layout(GT.emptyData())); assert.equal(app.writes(), 1);
+  vm.runInContext("go('program')", app.context);
+  const content = app.elements.get('#view').innerHTML;
+  for (const count of [21, 18, 24]) assert.ok(content.includes(`${count} working sets`));
+  vm.runInContext("go('dayEdit', {dayEditId: D.days[2].id})", app.context);
+  assert.ok(app.elements.get('#view').innerHTML.includes('Dead bug (per side)'));
+  vm.runInContext("startWorkout(D.days[2].id)", app.context);
+  const current = vm.runInContext('D.activeWorkout', app.context);
+  assert.ok(current.exercises.some(e => e.name === 'Overhead press'));
+  assert.ok(current.exercises.some(e => e.name === 'Dead bug (per side)'));
+  assert.equal(bootApp(app.stored()).writes(), 0);
+});
+t('migration save failure retains loaded history and the reviewed program in memory', () => {
+  const d = legacyData(); const past = GT.newWorkout(d, d.days[0]); past.endedAt = Date.now(); d.workouts.push(past);
+  const app = bootApp(d, true);
+  assert.equal(vm.runInContext('D.workouts[0].id', app.context), past.id);
+  assert.equal(vm.runInContext('D.version', app.context), 3);
+  assert.equal(app.stored().version, 2);
+});
+console.log(`\n${n} tests passed`);

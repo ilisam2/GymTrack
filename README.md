@@ -6,7 +6,7 @@ Minimal offline workout tracker. One `index.html`, no build step, no backend, no
 
 - `index.html` – the whole app (vanilla JS + CSS)
 - `manifest.webmanifest`, `sw.js`, `icon-*.png` – make it installable and usable offline
-- `test.js` – checks the progression rule with fake sessions (`node test.js`)
+- `test.js` – checks progression, program coverage, migration and history import (`node test.js`)
 
 ## Put it on your phone
 
@@ -38,7 +38,51 @@ Backups contain your training data, so do not commit them to a public repo (`bac
 
 ## Updating
 
-`index.html` is fetched network first, so a reload while online picks up a new version. Bump `CACHE` in `sw.js` when icons or the manifest change.
+`index.html` is fetched network first, so a reload while online picks up a new version. Bump `CACHE` in `sw.js` when changing cached files, including the history template.
+
+Version 3 of the saved data updates an untouched original three-day layout to the reviewed plan below. Exercise and day IDs, custom set counts and rep ranges, completed workouts, and an active workout are preserved. The update is also applied when importing a v1/v2 backup. A renamed, reordered, added, removed or toggled day/exercise keeps the customised layout. To adopt the reviewed default in that case, export a backup and use Settings → Reset program to default. The in-app Program tab includes the guidance below and the actual working-set totals for your days.
+
+## Reviewed three-day program
+
+The starting assumption is general strength and muscle growth with the existing glute emphasis. Train on nonconsecutive days, for example Monday, Wednesday and Friday. This is a balanced starting template, not a claim that every muscle needs the same number of exercises or that every muscle's growth is maximised.
+
+The old default already covered squats, hinges, unilateral leg work, chest pressing, rows and vertical pulls. Its gaps were disabled calf work, no enabled overhead press or lateral raise, optional-only rear-shoulder isolation, and core work dominated by flexion. Day 2 combined sumo deadlifts, squats, lunges, hip thrusts and kickbacks; Day 1 also had RDLs, front squats and hip thrusts. The revision trades some overlapping work for those missing movements.
+
+Every session starts with **5 minutes of easy rowing**, followed by lighter practice sets for the first compound lifts. Warm-ups do not count toward the working-set totals. All enabled strength exercises start at **3 sets**:
+
+| Day | Exercises in order, after rowing | Working sets |
+|---|---|---|
+| 1 · Full body (hinge) | Romanian deadlift; barbell front squat; dumbbell bench press; underhand lat pulldown; face pull; standing calf raise; Pallof press | 21 |
+| 2 · Lower / glutes / core | Barbell back squat; dumbbell raised lunge; barbell hip thrust; dumbbell hamstring curl; standing calf raise; machine abdominal crunch | 18 |
+| 3 · Upper | Dumbbell incline close-grip hammer press; overhead press; assisted pull-up; chest-supported low row; lateral raise; dumbbell bench hammer curl; incline lying single-arm tricep extension; dead bug | 24 |
+
+This is **63 working sets per week, down from 72**, plus three rowing warm-ups. The former CSV had inconsistent 3–4-set prescriptions; it now matches the app. Saved custom set counts are retained, so an existing user's totals can differ.
+
+| Region / movement | Enabled weekly coverage |
+|---|---|
+| Quads / knee-dominant work | 9 sets across front squat, back squat and lunge, on Days 1–2 |
+| Glutes / hip extension | RDL, squats and lunge on Days 1–2, plus 3 hip-thrust sets on Day 2; these overlap the leg totals |
+| Hamstrings | 3 RDL sets on Day 1 and 3 knee-flexion curl sets on Day 2 |
+| Calves | 3 sets each on Days 1 and 2, previously zero enabled sets |
+| Chest | 3 flat-press sets on Day 1 and 3 incline-press sets on Day 3 |
+| Back / pulling | 6 vertical-pull sets across Days 1 and 3, plus 3 row sets on Day 3; face pulls add upper-back work |
+| Shoulders | 3 face-pull sets on Day 1; 3 overhead-press and 3 lateral-raise sets on Day 3; chest presses also involve the front delts |
+| Arms | 3 direct curl and 3 direct triceps-extension sets on Day 3, plus indirect pulling / pressing work on Days 1 and 3 |
+| Core | 3 Pallof-press sets (resisting rotation), 3 crunch sets (flexion), 3 dead-bug sets (resisting extension), spread over all three days |
+
+These are prescribed exercise sets, not interchangeable measures of stimulus for every muscle involved. Compound and isolation contributions overlap; do not add the table as though every row were independent. Chest and hamstrings start at six targeted sets each, so this is a moderate starting dose for them rather than a maximum-hypertrophy prescription. Add volume to a priority region gradually if progress and recovery warrant it.
+
+### Exercise choices and effort
+
+- Keep most lifting sets around 1–3 reps short of failure with controlled technique. Rest about 2–3 minutes for compound lifts and 1–2 minutes for accessories, longer when needed. If the sessions are too long or recovery suffers, begin with two sets per exercise.
+- Lunges, Pallof presses and dead bugs use reps **per side**. Completing both sides counts as one set. Dead bugs use 6–10 controlled reps per side; keep the lower back steady and progress control or limb reach before chasing more reps or load.
+- Optional exercises are **swaps**, not an instruction to add every item: use a sumo deadlift instead of the RDL if preferred, a Smith row instead of the chest-supported row, or hanging leg raises / cross crunches instead of machine crunches. Keep Pallof presses and dead bugs for the different trunk-stability tasks.
+- Flyes, upright rows, extra arm work, kickbacks and a second hip-thrust slot remain available. They are not essential additions on top of this plan. The upright row is optional to make room for a vertical press and a lateral raise, not because it is universally unsuitable.
+- For broader fitness, build toward **150 minutes of moderate aerobic activity or 75 minutes vigorous per week**, or a mixture, using walking, cycling or another preferred activity. Three brief rowing warm-ups do not provide that full dose. Use comfortable mobility work for movements that are restricted; dedicated power or sport-specific drills depend on a separate goal.
+
+### Basis for the review
+
+The [ACSM 2026 guidance](https://acsm.org/resistance-training-guidelines-update-2026/) emphasises training the major muscle groups at least twice weekly, individualising workload, and consistency; around ten weekly sets per muscle is a hypertrophy-oriented target rather than a universal minimum for benefit. The exact exercise substitutions above are programming judgments to improve coverage within the existing three-day structure. The aerobic target and broad major-muscle coverage follow the [CDC adult activity guidelines](https://www.cdc.gov/physical-activity-basics/guidelines/adults.html).
 
 ## Rep ranges and progression rule
 
@@ -50,6 +94,7 @@ Defaults in the seeded program:
 | Other compound lifts | 6-10 | squats, hip thrust, presses, rows, pulldown, pull-up, lunge |
 | Isolation | 10-15 | curls, extensions, flyes, raises, hamstring curl, kickbacks |
 | Core and bodyweight | 12-20 | crunches, leg raise, Pallof press |
+| Controlled core stability | 6-10 per side | dead bug |
 
 Suggestion, based on the done sets of the last session for that exercise:
 
@@ -65,7 +110,7 @@ All numbers are editable in Settings. The suggestion is shown, never applied aut
 - Muscle growth is similar across loading ranges when sets are taken close to failure, while 1RM strength gains are larger with heavier loads (Schoenfeld et al., 2017; Lopez et al., 2021; Currier et al., 2023). Compound lifts therefore use a heavier range than isolation work.
 - Hypertrophy improves as sets end closer to failure; strength gains do not depend on it (Robinson et al., 2024). Momentary failure is not required (Refalo et al., 2023). Stop 1 to 3 reps short of failure.
 - Progress by load or by reps both work (Plotkin et al., 2022). The ACSM position stand recommends a 2 to 10% load increase once the target reps are met (American College of Sports Medicine, 2009). The percentage rule with a floor and cap follows that band.
-- Weekly volume of about 10 or more sets per muscle produces more growth than lower volumes (Schoenfeld et al., 2016). Three to four sets per exercise across three days meets that.
+- Higher weekly volume can support more hypertrophy (Schoenfeld et al., 2016). Three sets per exercise does **not** guarantee ten sets for every muscle: use the coverage table above, account for overlap, and adjust to your priority and recovery.
 
 ### References
 

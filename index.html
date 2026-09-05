@@ -208,7 +208,7 @@ const GT = (() => {
     return { action: 'keep', weightKg: top, text: 'In range but not at the top yet. Keep the weight.' };
   }
 
-  function defaultProgram() {
+  function defaultProgram(version = 3) {
     const E = {};
     const ex = (name, tag, o = {}) => { const e = Object.assign({ id: uid(), name, tag, repMin: 10, repMax: 14, sets: 3, timed: false, assisted: false, archived: false }, o); E[name] = e; return e.id; };
     // Ranges: deadlifts 6-8; other compounds 6-10 (heavier loads favour strength, hypertrophy similar across loads);
@@ -245,17 +245,27 @@ const GT = (() => {
     const pallof = ex('Pallof press', 'other', core);
     const on = (id) => ({ exerciseId: id, enabled: true });
     const off = (id) => ({ exerciseId: id, enabled: false });
-    const days = [
+    // Keep the old layout for recognising saved defaults without overwriting custom programs.
+    const legacyDays = [
       { id: uid(), name: 'Day 1 · Full body (hinge)', items: [rowing, rdl, frontSquat, hipThrust, dbBench, latPull, smithRow, curl, triExt].map(on).concat([off(facePull)]) },
       { id: uid(), name: 'Day 2 · Lower / glutes / core', items: [rowing, sumo, hamCurl, backSquat, lunge, hipThrust, kickback, crossCrunch, abCrunch].map(on).concat([off(calf), off(pallof)]) },
       { id: uid(), name: 'Day 3 · Upper', items: [rowing, hammerPress, flyes, pullup, lowRow, upright, hammerCurl, inclTri, legRaise].map(on).concat([off(ohp), off(latRaise), off(facePull)]) },
+    ];
+    if (version < 3) return { exercises: Object.values(E), days: legacyDays };
+    const deadBug = ex('Dead bug (per side)', 'other', { repMin: 6, repMax: 10 });
+    // One hinge day, one squat / unilateral day, and one upper day. Replace overlapping
+    // accessories with calves, overhead pressing, shoulder isolation and core stability.
+    const days = [
+      { id: uid(), name: legacyDays[0].name, items: [rowing, rdl, frontSquat, dbBench, latPull, facePull, calf, pallof].map(on).concat([hipThrust, smithRow, curl, triExt].map(off)) },
+      { id: uid(), name: legacyDays[1].name, items: [rowing, backSquat, lunge, hipThrust, hamCurl, calf, abCrunch].map(on).concat([sumo, kickback, crossCrunch].map(off)) },
+      { id: uid(), name: legacyDays[2].name, items: [rowing, hammerPress, ohp, pullup, lowRow, latRaise, hammerCurl, inclTri, deadBug].map(on).concat([flyes, upright, legRaise, facePull].map(off)) },
     ];
     return { exercises: Object.values(E), days };
   }
 
   function emptyData() {
     const p = defaultProgram();
-    return { version: 2, exercises: p.exercises, days: p.days, workouts: [], activeWorkout: null, bodyweight: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
+    return { version: 3, exercises: p.exercises, days: p.days, workouts: [], activeWorkout: null, bodyweight: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
   }
 
   // Last finished workout containing done sets for this exercise → its sets (sorted by setIndex)
@@ -364,7 +374,7 @@ const GT = (() => {
   // v1 -> v2: evidence-based rep ranges for untouched default exercises, assisted flag on the assisted pull-up.
   function migrate(d) {
     if (!d.version || d.version < 2) {
-      const fresh = defaultProgram().exercises;
+      const fresh = defaultProgram(2).exercises;
       for (const e of d.exercises) {
         const def = fresh.find(f => f.name === e.name);
         if (!def) continue;
@@ -373,6 +383,39 @@ const GT = (() => {
         if (def.assisted) e.assisted = true;
       }
       d.version = 2;
+    }
+    if (d.version < 3) {
+      const legacy = defaultProgram(2), fresh = defaultProgram();
+      const oldById = new Map(legacy.exercises.map(e => [e.id, e]));
+      const byId = new Map(d.exercises.map(e => [e.id, e]));
+      const untouched = d.days.length === legacy.days.length && d.days.every((day, i) => {
+        const old = legacy.days[i];
+        return day.name === old.name && day.items.length === old.items.length && day.items.every((item, j) => {
+          const e = byId.get(item.exerciseId), expected = old.items[j];
+          return e && !e.archived && e.name === oldById.get(expected.exerciseId).name && item.enabled === expected.enabled;
+        });
+      });
+      if (untouched) {
+        const freshById = new Map(fresh.exercises.map(e => [e.id, e]));
+        // Resolve existing entries first so their IDs, loads, rep ranges and set counts survive.
+        const ids = new Map();
+        for (const day of d.days) for (const item of day.items) {
+          const e = byId.get(item.exerciseId); ids.set(e.name, e.id);
+        }
+        d.days.forEach((day, i) => {
+          day.items = fresh.days[i].items.map(item => {
+            const def = freshById.get(item.exerciseId);
+            if (!ids.has(def.name)) {
+              const existing = d.exercises.find(e => e.name === def.name && !e.archived);
+              if (!existing) d.exercises.push(def);
+              ids.set(def.name, existing ? existing.id : def.id);
+            }
+            return { exerciseId: ids.get(def.name), enabled: item.enabled };
+          });
+        });
+      }
+      // Only future workouts use the new layout; completed and active snapshots stay intact.
+      d.version = 3;
     }
     return d;
   }
@@ -390,7 +433,17 @@ let UI = { view: 'home', sub: 'workouts', dayEditId: null, exEditId: null, worko
 let restEnd = 0, restTotal = 0, restTimer = null, elapsedTimer = null;
 
 function load() {
-  try { const raw = localStorage.getItem(KEY); if (raw) { const d = GT.migrate(JSON.parse(raw)); d.settings = Object.assign({}, GT.DEFAULT_SETTINGS, d.settings || {}); d.bodyweight = d.bodyweight || []; return d; } } catch (e) { console.error(e); }
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const d = JSON.parse(raw), version = d.version;
+      GT.migrate(d); d.settings = Object.assign({}, GT.DEFAULT_SETTINGS, d.settings || {}); d.bodyweight = d.bodyweight || [];
+      if (version !== d.version) {
+        try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { console.error('Could not save program update:', e); }
+      }
+      return d;
+    }
+  } catch (e) { console.error(e); }
   return GT.emptyData();
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(D)); } catch (e) { toast('Could not save: ' + e.message); } }
@@ -560,9 +613,19 @@ function renderWorkoutDetail() {
 }
 
 function renderProgram() {
-  let h = `<h1>Program</h1><p class="muted small">Changes apply to future workouts only.</p>`;
+  let h = `<h1>Program</h1><p class="muted small">Changes apply to future workouts only.</p>
+    <details class="card"><summary>How to use the reviewed three-day plan</summary><div class="muted small">
+      <p>Train on nonconsecutive days, for example Monday, Wednesday and Friday. The default keeps full body, lower and upper days, with calf work twice, overhead pressing, rear and side shoulder work, and three different core movements.</p>
+      <p>Start with 5 minutes of easy rowing, then lighter practice sets for your first big lifts. The listed strength sets are working sets. Use controlled reps and finish most lifting sets with 1–3 reps in reserve; rest 2–3 minutes for big lifts and 1–2 minutes for accessories, longer if needed.</p>
+      <p>For lunges, Pallof presses and dead bugs, the rep target is per side; completing both sides counts as one set. For dead bugs, keep your lower back steady and progress control or reach before adding reps.</p>
+      <p>Optional exercises are alternatives: switch one on and a similar exercise off. The default has 21 / 18 / 24 working sets; start with 2 sets per exercise if recovery or time is limited.</p>
+      <p>Build aerobic activity separately toward 150 minutes of moderate activity or 75 minutes vigorous each week. The short rowing warm-up is not a complete cardio plan. Walk or cycle on other days and use comfortable mobility work where movement is restricted.</p>
+      <p>Customised days are kept when the app updates. To use the reviewed default with a custom program, export a backup first, then use Settings → Reset program to default.</p>
+      <p>Guidance: <a href="https://acsm.org/resistance-training-guidelines-update-2026/" target="_blank" rel="noopener">ACSM resistance training</a> · <a href="https://www.cdc.gov/physical-activity-basics/guidelines/adults.html" target="_blank" rel="noopener">CDC activity guidelines</a>.</p>
+    </div></details>`;
   D.days.forEach((d, i) => {
-    h += `<div class="card"><div class="row"><div class="grow"><h3>${esc(d.name)}</h3><div class="muted small">${d.items.filter(x => x.enabled).length} on · ${d.items.filter(x => !x.enabled).length} optional</div></div>
+    const workingSets = d.items.filter(x => x.enabled).reduce((sum, x) => { const e = exById(x.exerciseId); return sum + (e && !e.timed ? +e.sets || 0 : 0); }, 0);
+    h += `<div class="card"><div class="row"><div class="grow"><h3>${esc(d.name)}</h3><div class="muted small">${d.items.filter(x => x.enabled).length} on · ${d.items.filter(x => !x.enabled).length} optional · ${workingSets} working sets</div></div>
       <button class="sm" data-act="dayMove" data-id="${d.id}" data-d="-1" ${i === 0 ? 'disabled' : ''}>↑</button><button class="sm" data-act="dayMove" data-id="${d.id}" data-d="1" ${i === D.days.length - 1 ? 'disabled' : ''}>↓</button><button class="sm primary" data-act="editDay" data-id="${d.id}">Edit</button></div></div>`;
   });
   h += `<button class="block" data-act="addDay">+ Add day</button>`;
@@ -599,7 +662,7 @@ function renderExEdit() {
     <label class="field row"><input type="checkbox" data-exf="timed" ${e.timed ? 'checked' : ''}><span style="margin:0 0 0 8px">Timed exercise (log time only, e.g. rowing)</span></label>
     <label class="field row"><input type="checkbox" data-exf="assisted" ${e.assisted ? 'checked' : ''}><span style="margin:0 0 0 8px">Assisted (logged weight is assistance, so less is progress)</span></label>
     <div class="row">${f('Rep min', 'repMin', 'number', e.repMin, 'inputmode="numeric" min="1"')}${f('Rep max', 'repMax', 'number', e.repMax, 'inputmode="numeric" min="1"')}${f('Sets', 'sets', 'number', e.sets, 'inputmode="numeric" min="1"')}</div>
-    <p class="muted small">Suggested ranges: deadlifts 6–8, other compound lifts 6–10, isolation 10–15, core 12–20. Take sets to 1–3 reps short of failure.</p>
+    <p class="muted small">Suggested ranges: deadlifts 6–8, other compound lifts 6–10, isolation 10–15, core 12–20; dead bugs 6–10 controlled reps per side. Finish most lifting sets with 1–3 reps in reserve.</p>
     <p class="muted small">Used in ${D.days.filter(d => d.items.some(i => i.exerciseId === e.id)).map(d => esc(d.name)).join(', ') || 'no days'}.</p>
     <p style="text-align:center;margin-top:16px"><button class="ghost danger sm" data-act="deleteEx" data-id="${e.id}">Remove from all days and archive</button></p>`;
 }
