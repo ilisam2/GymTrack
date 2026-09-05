@@ -35,7 +35,7 @@ t('three fake sessions: prefill and suggestion follow the latest session', () =>
     w.sets.filter(s => s.exerciseId === bench.id).forEach(s => { s.weightKg = kg; s.reps = reps; s.done = true; }); D.workouts.push(w); };
   doSession(20, 10, 10); doSession(20, 10, 6); doSession(22.5, 5, 2);
   const w = GT.newWorkout(D, day); const bs = w.sets.filter(s => s.exerciseId === bench.id);
-  assert.equal(bs.length, 3); assert.equal(bs[0].weightKg, 22.5); assert.equal(bs[0].reps, 5);
+  assert.equal(bs.length, 4); assert.equal(bs[0].weightKg, 22.5); assert.equal(bs[0].reps, 5);
   const last = GT.lastSetsFor(D, bench.id, w.id); const s = GT.suggest(bench, last.sets, D.settings);
   assert.equal(s.action, 'down'); assert.equal(s.altKg, 21.5);
   const rowing = w.exercises.find(e => e.timed); assert.ok(rowing); assert.equal(w.sets.find(x => x.exerciseId === rowing.id).seconds, 300);
@@ -43,9 +43,23 @@ t('three fake sessions: prefill and suggestion follow the latest session', () =>
 t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days.length, 3); assert.equal(D.days[0].items.filter(i => i.enabled).length, 9);
   assert.equal(D.days[2].items.filter(i => !i.enabled).length, 3); const rdl = D.exercises.find(e => e.name === 'Romanian deadlift'); assert.equal(rdl.repMin, 6); assert.equal(rdl.repMax, 8);
   const pu = D.exercises.find(e => e.name === 'Assisted pull-up'); assert.ok(pu.assisted); assert.equal(pu.repMax, 10); assert.equal(D.exercises.find(e => e.name === 'Cross crunch').repMax, 20); });
+t('v3 default program shape', () => { const D = GT.emptyData(); const names = (i) => D.days[i].items.filter(x => x.enabled).map(x => D.exercises.find(e => e.id === x.exerciseId).name);
+  assert.equal(D.version, 3); assert.deepEqual(names(0), ['Rowing (warm-up)', 'Romanian deadlift', 'Dumbbell bench press', 'Barbell front squat', 'Underhand lat pulldown', 'Smith machine bent-over row', 'Lying single dumbbell tricep extension', 'Face pull', 'Standing calf raise']);
+  assert.ok(names(2).includes('Overhead press') && names(2).includes('Lateral raise') && !names(2).includes('Dumbbell upright row')); assert.ok(names(1).includes('Pallof press') && !names(1).includes('Cable donkey kickbacks'));
+  D.days.forEach(d => assert.ok(d.items.filter(x => x.enabled).length <= 9)); assert.equal(D.exercises.find(e => e.name === 'Romanian deadlift').sets, 4); });
+t('migrate v2 → v3 rewrites untouched days, leaves customised ones', () => {
+  const old = GT.emptyData(); old.version = 2;
+  const nm = (n) => old.exercises.find(e => e.name === n).id;
+  old.days[0].items = ['Rowing (warm-up)', 'Romanian deadlift', 'Barbell front squat', 'Barbell hip thrust', 'Dumbbell bench press', 'Underhand lat pulldown', 'Smith machine bent-over row', 'Dumbbell bench bicep curl', 'Lying single dumbbell tricep extension'].map(n => ({ exerciseId: nm(n), enabled: true })).concat([{ exerciseId: nm('Face pull'), enabled: false }]);
+  old.days[2].items = [{ exerciseId: nm('Rowing (warm-up)'), enabled: true }, { exerciseId: nm('Cable flyes'), enabled: true }]; // customised
+  GT.migrate(old); assert.equal(old.version, 3);
+  const d1 = old.days[0].items.filter(x => x.enabled).map(x => old.exercises.find(e => e.id === x.exerciseId).name);
+  assert.ok(d1.includes('Face pull') && d1.includes('Standing calf raise') && !d1.includes('Barbell hip thrust')); assert.equal(old.days[0].items.filter(x => !x.enabled).length, 2);
+  assert.equal(old.days[2].items.length, 2); assert.deepEqual(old.changedDays, ['Day 1 · Full body (hinge)']);
+  assert.equal(old.exercises.filter(e => e.name === 'Standing calf raise').length, 1); });
 t('migrate v1 → v2 updates untouched ranges, keeps edited ones', () => { const old = GT.emptyData(); old.version = 1; old.exercises.forEach(e => { e.assisted = false; e.repMin = e.name.includes('deadlift') ? 6 : 10; e.repMax = e.name.includes('deadlift') ? 8 : 14; });
   const edited = old.exercises.find(e => e.name === 'Cable flyes'); edited.repMin = 8; edited.repMax = 12; GT.migrate(old);
-  assert.equal(old.version, 2); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted); });
+  assert.equal(old.version, 3); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted); });
 console.log(`\n${n} tests passed`);
 
 // ---- History import (CSV / JSON) ----

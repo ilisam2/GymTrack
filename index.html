@@ -215,25 +215,25 @@ const GT = (() => {
     // isolation 10-15; core / bodyweight 12-20.
     const dl = { repMin: 6, repMax: 8 }, comp = { repMin: 6, repMax: 10 }, iso = { repMin: 10, repMax: 15 }, core = { repMin: 12, repMax: 20 };
     const rowing = ex('Rowing (warm-up)', 'other', { timed: true, sets: 1 });
-    const rdl = ex('Romanian deadlift', 'lower', dl);
-    const frontSquat = ex('Barbell front squat', 'lower', comp);
-    const hipThrust = ex('Barbell hip thrust', 'lower', comp);
-    const dbBench = ex('Dumbbell bench press', 'upper', comp);
+    const rdl = ex('Romanian deadlift', 'lower', Object.assign({ sets: 4 }, dl));
+    const frontSquat = ex('Barbell front squat', 'lower', Object.assign({ sets: 4 }, comp));
+    const hipThrust = ex('Barbell hip thrust', 'lower', Object.assign({ sets: 4 }, comp));
+    const dbBench = ex('Dumbbell bench press', 'upper', Object.assign({ sets: 4 }, comp));
     const latPull = ex('Underhand lat pulldown', 'upper', comp);
     const smithRow = ex('Smith machine bent-over row', 'upper', comp);
     const curl = ex('Dumbbell bench bicep curl', 'upper', iso);
     const triExt = ex('Lying single dumbbell tricep extension', 'upper', iso);
-    const sumo = ex('Sumo deadlift', 'lower', dl);
+    const sumo = ex('Sumo deadlift', 'lower', Object.assign({ sets: 4 }, dl));
     const hamCurl = ex('Dumbbell hamstring curl', 'lower', iso);
-    const backSquat = ex('Barbell back squat', 'lower', comp);
+    const backSquat = ex('Barbell back squat', 'lower', Object.assign({ sets: 4 }, comp));
     const lunge = ex('Dumbbell raised lunge', 'lower', comp);
     const kickback = ex('Cable donkey kickbacks', 'lower', iso);
     const crossCrunch = ex('Cross crunch', 'other', core);
     const abCrunch = ex('Machine abdominal crunch', 'other', core);
-    const hammerPress = ex('Dumbbell incline close-grip hammer press', 'upper', comp);
+    const hammerPress = ex('Dumbbell incline close-grip hammer press', 'upper', Object.assign({ sets: 4 }, comp));
     const flyes = ex('Cable flyes', 'upper', iso);
-    const pullup = ex('Assisted pull-up', 'upper', Object.assign({ assisted: true }, comp));
-    const lowRow = ex('Chest-supported low row', 'upper', comp);
+    const pullup = ex('Assisted pull-up', 'upper', Object.assign({ assisted: true, sets: 4 }, comp));
+    const lowRow = ex('Chest-supported low row', 'upper', Object.assign({ sets: 4 }, comp));
     const upright = ex('Dumbbell upright row', 'upper', iso);
     const hammerCurl = ex('Dumbbell bench hammer curl', 'upper', iso);
     const inclTri = ex('Incline lying single-arm tricep extension', 'upper', iso);
@@ -245,17 +245,20 @@ const GT = (() => {
     const pallof = ex('Pallof press', 'other', core);
     const on = (id) => ({ exerciseId: id, enabled: true });
     const off = (id) => ({ exerciseId: id, enabled: false });
+    // v3 program (see README "Program review"): upper and lower lifts alternate on Day 1, no hip thrust on Day 1,
+    // face pull and calf raise added, overhead press + lateral raise replace the upright row, Pallof press replaces
+    // the second crunch, one curl and one tricep extension per week. Removed exercises stay available as optionals.
     const days = [
-      { id: uid(), name: 'Day 1 · Full body (hinge)', items: [rowing, rdl, frontSquat, hipThrust, dbBench, latPull, smithRow, curl, triExt].map(on).concat([off(facePull)]) },
-      { id: uid(), name: 'Day 2 · Lower / glutes / core', items: [rowing, sumo, hamCurl, backSquat, lunge, hipThrust, kickback, crossCrunch, abCrunch].map(on).concat([off(calf), off(pallof)]) },
-      { id: uid(), name: 'Day 3 · Upper', items: [rowing, hammerPress, flyes, pullup, lowRow, upright, hammerCurl, inclTri, legRaise].map(on).concat([off(ohp), off(latRaise), off(facePull)]) },
+      { id: uid(), name: 'Day 1 · Full body (hinge)', items: [rowing, rdl, dbBench, frontSquat, latPull, smithRow, triExt, facePull, calf].map(on).concat([off(hipThrust), off(curl)]) },
+      { id: uid(), name: 'Day 2 · Lower / glutes / core', items: [rowing, backSquat, hamCurl, sumo, lunge, hipThrust, calf, crossCrunch, pallof].map(on).concat([off(kickback), off(abCrunch)]) },
+      { id: uid(), name: 'Day 3 · Upper', items: [rowing, hammerPress, pullup, ohp, lowRow, latRaise, flyes, hammerCurl, legRaise].map(on).concat([off(upright), off(inclTri), off(facePull)]) },
     ];
     return { exercises: Object.values(E), days };
   }
 
   function emptyData() {
     const p = defaultProgram();
-    return { version: 2, exercises: p.exercises, days: p.days, workouts: [], activeWorkout: null, bodyweight: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
+    return { version: 3, exercises: p.exercises, days: p.days, workouts: [], activeWorkout: null, bodyweight: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
   }
 
   // Last finished workout containing done sets for this exercise → its sets (sorted by setIndex)
@@ -373,6 +376,29 @@ const GT = (() => {
         if (def.assisted) e.assisted = true;
       }
       d.version = 2;
+    }
+    if (d.version < 3) {
+      // v2 -> v3: apply the reviewed program to days the user has not customised. A day is untouched when its
+      // exercise names and enabled flags still equal the v2 defaults (order ignored). New exercises are created as needed.
+      const V2 = {
+        'Day 1 · Full body (hinge)': { on: ['Rowing (warm-up)', 'Romanian deadlift', 'Barbell front squat', 'Barbell hip thrust', 'Dumbbell bench press', 'Underhand lat pulldown', 'Smith machine bent-over row', 'Dumbbell bench bicep curl', 'Lying single dumbbell tricep extension'], off: ['Face pull'] },
+        'Day 2 · Lower / glutes / core': { on: ['Rowing (warm-up)', 'Sumo deadlift', 'Dumbbell hamstring curl', 'Barbell back squat', 'Dumbbell raised lunge', 'Barbell hip thrust', 'Cable donkey kickbacks', 'Cross crunch', 'Machine abdominal crunch'], off: ['Standing calf raise', 'Pallof press'] },
+        'Day 3 · Upper': { on: ['Rowing (warm-up)', 'Dumbbell incline close-grip hammer press', 'Cable flyes', 'Assisted pull-up', 'Chest-supported low row', 'Dumbbell upright row', 'Dumbbell bench hammer curl', 'Incline lying single-arm tricep extension', 'Hanging leg raise'], off: ['Overhead press', 'Lateral raise', 'Face pull'] },
+      };
+      const fresh = defaultProgram();
+      const byName = (name) => d.exercises.find(e => e.name.toLowerCase() === name.toLowerCase() && !e.archived) || d.exercises.find(e => e.name.toLowerCase() === name.toLowerCase());
+      const ensure = (name) => { let e = byName(name); if (!e) { const def = fresh.exercises.find(f => f.name === name); e = Object.assign({}, def, { id: uid() }); d.exercises.push(e); } return e; };
+      const sig = (items) => items.map(i => { const e = d.exercises.find(x => x.id === i.exerciseId); return e ? `${e.name.toLowerCase()}:${i.enabled ? 1 : 0}` : ''; }).filter(Boolean).sort().join('|');
+      d.changedDays = [];
+      for (const day of d.days) {
+        const v2 = V2[day.name]; if (!v2) continue;
+        const want = v2.on.map(n => `${n.toLowerCase()}:1`).concat(v2.off.map(n => `${n.toLowerCase()}:0`)).sort().join('|');
+        if (sig(day.items) !== want) continue;
+        const def = fresh.days.find(x => x.name === day.name);
+        day.items = def.items.map(i => { const fe = fresh.exercises.find(f => f.id === i.exerciseId); return { exerciseId: ensure(fe.name).id, enabled: i.enabled }; });
+        d.changedDays.push(day.name);
+      }
+      d.version = 3;
     }
     return d;
   }
@@ -782,6 +808,7 @@ window.addEventListener('visibilitychange', () => { if (!document.hidden && $('#
 
 if (D.activeWorkout) UI.view = 'workout';
 render();
+if (D.changedDays && D.changedDays.length) { const n = D.changedDays.length; delete D.changedDays; save(); setTimeout(() => toast(`Program updated (${n} day${n > 1 ? 's' : ''}) · see Program`), 600); }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
 </script>
 </body>
