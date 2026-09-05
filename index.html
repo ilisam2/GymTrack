@@ -87,10 +87,18 @@ label.field span{display:block;font-size:.8rem;color:var(--muted);margin-bottom:
 .set.done input{color:var(--good)}
 .set.done .check{background:var(--good);color:#04210f;border-color:transparent;box-shadow:0 3px 12px rgba(62,209,132,.35)}
 /* focus workout */
+body.inworkout nav{display:none}
+body.inworkout{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
+body.inworkout.resting{padding-bottom:calc(130px + env(safe-area-inset-bottom))}
+body.inworkout #rest{bottom:calc(12px + env(safe-area-inset-bottom))}
+.topbar button.icon{font-size:1.5rem;min-width:44px;padding:0}
+.topbar button.icon.on{color:var(--accent)}
 .setchips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 4px}
 .chipbtn{min-height:38px;min-width:auto;padding:0 12px;font-size:.85rem;border-radius:999px;font-variant-numeric:tabular-nums}
 .chipbtn.done{background:var(--good-bg);color:var(--good);border-color:transparent}
 .chipbtn.cur{border-color:var(--accent);box-shadow:0 0 0 2px rgba(91,140,255,.28);color:var(--text)}
+.chipbtn.up{background:var(--good);color:#04210f;border-color:transparent;font-weight:800}
+.chipbtn.down{background:var(--warn);color:#2a1d00;border-color:transparent;font-weight:800}
 .bs{display:flex;align-items:center;gap:8px;margin-top:10px}
 .bs button{width:64px;min-width:64px;min-height:64px;font-size:1.9rem;padding:0;border-radius:18px}
 .bs .val{flex:1;display:flex;flex-direction:column;align-items:center;min-width:0}
@@ -98,6 +106,7 @@ label.field span{display:block;font-size:.8rem;color:var(--muted);margin-bottom:
 .bs .u{font-size:.78rem;color:var(--muted);margin-top:4px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
 .done-btn{min-height:68px;font-size:1.15rem;margin-top:14px;border-radius:18px;width:100%}
 .exnav{display:flex;gap:8px;margin-top:2px}
+.exnav button{min-height:60px;font-size:1.05rem}
 .exnav button{flex:1;min-height:56px}
 .exlist .list-item.cur{color:var(--accent)}
 /* progress bar */
@@ -412,6 +421,7 @@ function render() {
   if (UI._anim) { UI._anim = false; v.classList.remove('in'); void v.offsetWidth; v.classList.add('in'); }
   const navKey = { workout: 'home', dayEdit: 'program', exEdit: 'program', workoutDetail: 'history' }[UI.view] || UI.view;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === navKey));
+  document.body.classList.toggle('inworkout', UI.view === 'workout');
   clearInterval(elapsedTimer);
   if (UI.view === 'workout' && D.activeWorkout) elapsedTimer = setInterval(() => { const el = $('#elapsed'); if (el) el.textContent = fmtDur((Date.now() - D.activeWorkout.startedAt) / 1000); }, 1000);
 }
@@ -451,32 +461,39 @@ function wCursor(w) {
   return w.cursor;
 }
 function firstUndone(w, exIdx) { const sets = setsOf(w, w.exercises[exIdx].id); const i = sets.findIndex(x => !x.done); return i < 0 ? 0 : i; }
+function compactSets(e, sets) {
+  if (!sets.length) return '';
+  if (e.timed) return sets.map(x => fmtMMSS(x.seconds)).join(', ');
+  const same = sets.every(x => x.weightKg === sets[0].weightKg && x.reps === sets[0].reps);
+  return same ? `${fmtKg(sets[0].weightKg)} kg × ${sets[0].reps}${sets.length > 1 ? ` · ${sets.length} sets` : ''}` : sets.map(x => `${fmtKg(x.weightKg)}×${x.reps}`).join(', ');
+}
 function renderWorkout() {
   const w = D.activeWorkout; if (!w) { UI.view = 'home'; return renderHome(); }
   const cur = wCursor(w); const e = w.exercises[cur.ex]; const sets = setsOf(w, e.id); const s = sets[cur.set];
   const total = w.sets.length, doneN = w.sets.filter(x => x.done).length, allDone = total > 0 && doneN === total;
   const last = GT.lastSetsFor(D, e.id, w.id); const sug = e.timed ? null : GT.suggest(e, last ? last.sets : [], D.settings);
-  const exDone = sets.filter(x => x.done).length; const st = D.settings.weightStepKg || 2.5;
-  let h = `<div class="topbar"><div class="row"><button class="sm ghost" data-act="home">‹ Home</button><h1 class="grow">${esc(w.dayName)}</h1><span class="elapsed" id="elapsed">${fmtDur((Date.now() - w.startedAt) / 1000)}</span></div>
-    <div class="row" style="margin-top:6px"><span class="stat grow">Exercise ${cur.ex + 1} of ${w.exercises.length}</span><span class="stat">${doneN} / ${total} sets</span></div><div class="prog"><i style="width:${total ? 100 * doneN / total : 0}%"></i></div></div>`;
-  h += `<div class="card ${exDone && exDone === sets.length ? 'complete' : ''}"><div class="row"><div class="grow"><h3>${esc(e.name)} ${sug && sug.action === 'up' ? `<span class="chip up">${sug.deltaKg < 0 ? '↑ ' + fmtKg(sug.deltaKg) + ' kg assist' : '↑ +' + fmtKg(sug.deltaKg) + ' kg'}</span>` : ''}${sug && sug.action === 'reps' ? `<span class="chip up">↑ reps</span>` : ''}${sug && sug.action === 'down' ? `<span class="chip down">↓ check</span>` : ''}</h3>
-      <div class="muted small">${e.timed ? 'time only' : `${e.repMin}–${e.repMax} reps`}${e.assisted ? ' · assisted' : ''}${last ? ` · last ${e.timed ? last.sets.map(x => fmtMMSS(x.seconds)).join(', ') : last.sets.map(x => `${fmtKg(x.weightKg)}×${x.reps}`).join(', ')}` : ''}</div></div><span class="chip cnt">${exDone}/${sets.length}</span></div>`;
-  if (sug && sug.action !== 'none') h += `<div class="row small" style="margin-top:8px"><span class="grow muted">${esc(sug.text)}</span>${sug.action !== 'reps' ? `<button class="sm" data-act="apply" data-kg="${sug.weightKg}">Use ${fmtKg(sug.weightKg)}</button>` : ''}${sug.altKg != null ? `<button class="sm" data-act="apply" data-kg="${sug.altKg}">${fmtKg(sug.altKg)}</button>` : ''}</div>`;
-  h += `<div class="setchips">${sets.map((x, i) => `<button class="chipbtn ${x.done ? 'done' : ''} ${i === cur.set ? 'cur' : ''}" data-act="selSet" data-i="${i}">${x.done ? (e.timed ? fmtMMSS(x.seconds) : `${fmtKg(x.weightKg)}×${x.reps}`) : 'Set ' + (i + 1)}</button>`).join('')}<button class="chipbtn" data-act="addSet" title="Add set">+</button></div>`;
+  const exDone = sets.filter(x => x.done).length; const st = D.settings.weightStepKg || 2.5; const hasNote = !!w.exerciseNotes[e.id];
+  let h = `<div class="topbar"><div class="row"><button class="sm ghost icon" data-act="home" aria-label="Home">‹</button><div class="grow" style="text-align:center"><div style="font-weight:800">Exercise ${cur.ex + 1}/${w.exercises.length}</div><div class="stat">${doneN}/${total} sets · <span id="elapsed">${fmtDur((Date.now() - w.startedAt) / 1000)}</span></div></div><button class="sm ghost icon ${UI.wlist ? 'on' : ''}" data-act="wlist" aria-label="All exercises">☰</button></div><div class="prog"><i style="width:${total ? 100 * doneN / total : 0}%"></i></div></div>`;
+  if (UI.wlist) {
+    h += `<div class="card exlist">` + w.exercises.map((x, i) => { const ss = setsOf(w, x.id), dn = ss.filter(y => y.done).length;
+      return `<div class="list-item ${i === cur.ex ? 'cur' : ''}" data-act="jumpEx" data-i="${i}"><span class="chip cnt ${dn === ss.length ? 'up' : ''}">${dn}/${ss.length}</span><div class="grow">${esc(x.name)}</div><span class="muted">›</span></div>`; }).join('') + `</div>`;
+    h += `<div class="card"><label class="field"><span>Workout notes</span><textarea data-wnote placeholder="How did it go?">${esc(w.notes)}</textarea></label>
+      <div class="row"><button class="good grow" data-act="finish">Finish workout</button><button class="danger" data-act="discard">Discard</button></div></div>`;
+    return h;
+  }
+  h += `<div class="card ${exDone && exDone === sets.length ? 'complete' : ''}"><div class="row"><h3 class="grow">${esc(e.name)}</h3><button class="sm ghost" data-act="toggleNote" aria-label="Note">${hasNote ? '📝' : '✎'}</button></div>
+    <div class="muted small">${e.timed ? 'Time' : `${e.repMin}–${e.repMax} reps`}${e.assisted ? ' · assisted' : ''}${last ? ` · last ${compactSets(e, last.sets)}` : ''}</div>`;
+  if (sug && sug.action === 'up') h += `<div class="setchips" style="margin-bottom:0"><button class="chipbtn up" data-act="apply" data-kg="${sug.weightKg}">↑ Use ${fmtKg(sug.weightKg)} kg${sug.deltaKg < 0 ? ' assist' : ''}</button></div>`;
+  else if (sug && sug.action === 'down') h += `<div class="setchips" style="margin-bottom:0"><button class="chipbtn down" data-act="apply" data-kg="${sug.weightKg}">↓ Keep ${fmtKg(sug.weightKg)}</button><button class="chipbtn down" data-act="apply" data-kg="${sug.altKg}">${fmtKg(sug.altKg)} kg</button></div>`;
+  else if (sug && sug.action === 'reps') h += `<div class="setchips" style="margin-bottom:0"><span class="chipbtn up" style="display:inline-flex;align-items:center">↑ Add reps or load</span></div>`;
+  h += `<div class="setchips">${sets.map((x, i) => `<button class="chipbtn ${x.done ? 'done' : ''} ${i === cur.set ? 'cur' : ''}" data-act="selSet" data-i="${i}">${x.done ? (e.timed ? fmtMMSS(x.seconds) : `${fmtKg(x.weightKg)}×${x.reps}`) : 'Set ' + (i + 1)}</button>`).join('')}<button class="chipbtn" data-act="addSet" aria-label="Add set">+</button>${sets.length > 1 ? `<button class="chipbtn" data-act="rmSet" aria-label="Remove set">−</button>` : ''}</div>`;
   const bs = (f, d, inner, unit) => `<div class="bs"><button data-act="step" data-f="${f}" data-d="${-d}">−</button><div class="val">${inner}<span class="u">${unit}</span></div><button data-act="step" data-f="${f}" data-d="${d}">+</button></div>`;
   if (e.timed) h += bs('seconds', 30, `<input type="text" inputmode="numeric" value="${fmtMMSS(s.seconds)}" data-f="seconds">`, 'min:sec');
   else h += bs('weightKg', st, `<input type="number" inputmode="decimal" step="0.5" min="0" value="${s.weightKg}" data-f="weightKg">`, e.assisted ? 'kg assist' : 'kg') + bs('reps', 1, `<input type="number" inputmode="numeric" step="1" min="0" value="${s.reps}" data-f="reps">`, 'reps');
   h += s.done ? `<button class="done-btn" data-act="done">Undo set ${cur.set + 1}</button>` : `<button class="done-btn good" data-act="done">✓ Done · set ${cur.set + 1} of ${sets.length}</button>`;
-  h += `<div class="row" style="margin-top:8px"><button class="sm ghost" data-act="toggleNote">${w.exerciseNotes[e.id] ? '📝 Note' : 'Note'}</button><button class="sm ghost right danger" data-act="rmSet" ${sets.length <= 1 ? 'disabled' : ''}>Remove set</button></div>
-    <div ${UI.noteOpen || w.exerciseNotes[e.id] ? '' : 'hidden'} style="margin-top:8px"><textarea data-note="${e.id}" placeholder="Notes for this exercise…">${esc(w.exerciseNotes[e.id] || '')}</textarea></div></div>`;
+  h += `<div ${UI.noteOpen || hasNote ? '' : 'hidden'} style="margin-top:10px"><textarea data-note="${e.id}" placeholder="Notes for this exercise…">${esc(w.exerciseNotes[e.id] || '')}</textarea></div></div>`;
   if (allDone) h += `<button class="good block" data-act="finish" style="min-height:64px;font-size:1.1rem;border-radius:18px;margin-bottom:12px">Finish workout</button>`;
-  h += `<div class="exnav"><button data-act="prevEx" ${cur.ex === 0 ? 'disabled' : ''}>‹ Prev</button><button data-act="wlist">${UI.wlist ? 'Hide' : 'List'}</button><button class="${cur.ex < w.exercises.length - 1 ? 'primary' : ''}" data-act="nextEx" ${cur.ex >= w.exercises.length - 1 ? 'disabled' : ''}>Next ›</button></div>`;
-  if (UI.wlist) {
-    h += `<div class="card exlist" style="margin-top:12px">` + w.exercises.map((x, i) => { const ss = setsOf(w, x.id), dn = ss.filter(y => y.done).length;
-      return `<div class="list-item ${i === cur.ex ? 'cur' : ''}" data-act="jumpEx" data-i="${i}"><span class="chip cnt ${dn === ss.length ? 'up' : ''}">${dn}/${ss.length}</span><div class="grow">${esc(x.name)}</div><span class="muted">›</span></div>`; }).join('') + `</div>`;
-    h += `<div class="card"><label class="field"><span>Workout notes</span><textarea data-wnote placeholder="How did it go?">${esc(w.notes)}</textarea></label>
-      <div class="row"><button class="good grow" data-act="finish">Finish workout</button><button class="danger" data-act="discard">Discard</button></div></div>`;
-  }
+  h += `<div class="exnav"><button data-act="prevEx" ${cur.ex === 0 ? 'disabled' : ''}>‹ Prev</button><button class="${cur.ex < w.exercises.length - 1 ? 'primary' : ''}" data-act="nextEx" ${cur.ex >= w.exercises.length - 1 ? 'disabled' : ''}>Next ›</button></div>`;
   return h;
 }
 
@@ -710,7 +727,7 @@ document.addEventListener('click', (ev) => {
     case 'prevEx': cur.ex -= 1; cur.set = firstUndone(w, cur.ex); UI.noteOpen = false; save(); go('workout'); return;
     case 'nextEx': cur.ex += 1; cur.set = firstUndone(w, cur.ex); UI.noteOpen = false; save(); go('workout'); return;
     case 'jumpEx': cur.ex = +el.dataset.i; cur.set = firstUndone(w, cur.ex); UI.wlist = false; UI.noteOpen = false; save(); go('workout'); return;
-    case 'wlist': UI.wlist = !UI.wlist; render(); return;
+    case 'wlist': UI.wlist = !UI.wlist; window.scrollTo(0, 0); render(); return;
     case 'toggleNote': UI.noteOpen = !UI.noteOpen; render(); if (UI.noteOpen) { const t = $('textarea[data-note]'); if (t) t.focus(); } return;
     case 'pickEx': return;
     case 'addBw': { const v = parseFloat($('#bwInput').value); if (!(v > 0)) return toast('Enter a weight'); D.bodyweight.push({ id: GT.uid(), date: Date.now(), kg: v }); save(); render(); return; }
