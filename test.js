@@ -24,9 +24,9 @@ t('assisted never below 0', () => assert.equal(GT.suggest({ tag: 'upper', repMin
 t('one set below bottom → keep or drop 5%', () => { const s = GT.suggest(lower, sets(80, 12, 11, 9), S); assert.equal(s.action, 'down'); assert.equal(s.weightKg, 80); assert.equal(s.altKg, 76); });
 t('drop rounds to 0.5 kg', () => { const s = GT.suggest(upper, sets(22.5, 12, 8), S); assert.equal(s.altKg, 21.5); });
 t('in range, not all at top → keep', () => { const s = GT.suggest(upper, sets(40, 14, 13, 12), S); assert.equal(s.action, 'keep'); assert.equal(s.weightKg, 40); });
-t('undone sets are ignored', () => { const prev = sets(40, 14, 14).concat([{ setIndex: 2, weightKg: 40, reps: 3, done: false }]); assert.equal(GT.suggest(upper, prev, S).action, 'up'); });
+t('unfinished working sets block an increase', () => { const prev = sets(40, 14, 14).concat([{ setIndex: 2, weightKg: 40, reps: 3, done: false }]); assert.equal(GT.suggest(upper, prev, S).action, 'keep'); });
 t('custom settings respected', () => { const s = GT.suggest(lower, sets(60, 14, 14), { lowerPct: 10, lowerIncrementKg: 2.5, minStepKg: 1, dropPct: 10 }); assert.equal(s.weightKg, 62.5); });
-t('top weight used when sets differ', () => { const s = GT.suggest(upper, [{ setIndex: 0, weightKg: 42.5, reps: 14, done: true }, { setIndex: 1, weightKg: 40, reps: 14, done: true }], S); assert.equal(s.weightKg, 44.5); });
+t('mixed loads are repeated instead of promoting every set to the top load', () => { const s = GT.suggest(upper, [{ setIndex: 0, weightKg: 42.5, reps: 14, done: true }, { setIndex: 1, weightKg: 40, reps: 14, done: true }], S); assert.equal(s.action, 'keep'); assert.equal(s.weightKg, 42.5); });
 
 // Simulate three fake sessions end to end through newWorkout/lastSetsFor.
 t('three fake sessions: prefill and suggestion follow the latest session', () => {
@@ -45,12 +45,12 @@ t('default program shape', () => { const D = GT.emptyData(); assert.equal(D.days
   const pu = D.exercises.find(e => e.name === 'Assisted pull-up'); assert.ok(pu.assisted); assert.equal(pu.repMax, 10); assert.equal(D.exercises.find(e => e.name === 'Cross crunch').repMax, 20); });
 t('migrate v1 updates untouched ranges, keeps edited ones', () => { const old = legacyData(); old.version = 1; old.exercises.forEach(e => { e.assisted = false; e.repMin = e.name.includes('deadlift') ? 6 : 10; e.repMax = e.name.includes('deadlift') ? 8 : 14; });
   const edited = old.exercises.find(e => e.name === 'Cable flyes'); edited.repMin = 8; edited.repMax = 12; GT.migrate(old);
-  assert.equal(old.version, 3); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted);
+  assert.equal(old.version, 4); assert.equal(old.exercises.find(e => e.name === 'Dumbbell bench press').repMax, 10); assert.equal(edited.repMax, 12); assert.ok(old.exercises.find(e => e.name === 'Assisted pull-up').assisted);
   assert.ok(GT.newWorkout(old, old.days[2]).exercises.some(e => e.name === 'Dead bug (per side)')); });
 
 // Independent record of the shipped v2 layout, including its disabled items.
 function legacyData() {
-  const d = GT.emptyData(); d.version = 2;
+  const d = Object.assign(GT.emptyData(), GT.defaultProgram(2)); d.version = 2;
   d.exercises = d.exercises.filter(e => e.name !== 'Dead bug (per side)');
   const layouts = [
     [['Rowing (warm-up)', 'Romanian deadlift', 'Barbell front squat', 'Barbell hip thrust', 'Dumbbell bench press', 'Underhand lat pulldown', 'Smith machine bent-over row', 'Dumbbell bench bicep curl', 'Lying single dumbbell tricep extension'], ['Face pull']],
@@ -93,8 +93,8 @@ t('v2 migration preserves history, active workout, exercise IDs and custom presc
   const snapshots = JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]);
   const exercises = JSON.stringify(d.exercises), ids = d.days.map(day => day.id);
   GT.migrate(d);
-  assert.equal(d.version, 3); assert.equal(layout(d), layout(GT.emptyData()));
-  assert.equal(JSON.stringify(d.exercises.slice(0, -1)), exercises);
+  assert.equal(d.version, 4); assert.equal(layout(d), layout(GT.emptyData()));
+  for (const before of JSON.parse(exercises)) { const after = d.exercises.find(e => e.id === before.id); for (const key of Object.keys(before)) assert.deepEqual(after[key], before[key]); }
   assert.deepEqual(d.days.map(day => day.id), ids);
   assert.equal(JSON.stringify([d.workouts, d.activeWorkout, d.bodyweight, d.settings]), snapshots);
   const next = GT.newWorkout(d, d.days[0]).sets.filter(s => s.exerciseId === ex.id);
@@ -115,7 +115,7 @@ t('edited layouts, renamed or archived exercises, and added or removed days surv
   ];
   for (const edit of edits) {
     const d = legacyData(); edit(d); const before = JSON.stringify([d.days, d.exercises]);
-    GT.migrate(d); assert.equal(JSON.stringify([d.days, d.exercises]), before); assert.equal(d.version, 3);
+    GT.migrate(d); const [days, exercises] = JSON.parse(before); assert.equal(JSON.stringify(d.days), JSON.stringify(days)); for (const ex of exercises) { const after = d.exercises.find(e => e.id === ex.id); for (const key of Object.keys(ex)) assert.deepEqual(after[key], ex[key]); } assert.equal(d.version, 4);
   }
 });
 t('existing dead bug library entry is reused without overwriting it', () => {
@@ -176,11 +176,11 @@ function bootApp(saved, failSave = false) {
     window: { scrollTo() {}, addEventListener() {} }, matchMedia: () => ({ matches: true, addEventListener() {} }),
     clearInterval() {}, setInterval() {}, clearTimeout() {}, setTimeout() {} });
   for (const script of html.matchAll(/<script(?: id="core")?>([\s\S]*?)<\/script>/g)) vm.runInContext(script[1], context);
-  return { context, elements, events, stored: () => JSON.parse(stored), writes: () => writes };
+  return { context, elements, events, document, stored: () => JSON.parse(stored), writes: () => writes };
 }
 t('saved default migrates on app boot, persists once, and renders working-set totals', () => {
   const app = bootApp(legacyData());
-  assert.equal(app.stored().version, 3); assert.equal(layout(app.stored()), layout(GT.emptyData())); assert.equal(app.writes(), 1);
+  assert.equal(app.stored().version, 4); assert.equal(layout(app.stored()), layout(GT.emptyData())); assert.equal(app.writes(), 1);
   vm.runInContext("go('program')", app.context);
   const content = app.elements.get('#view').innerHTML;
   for (const count of [21, 18, 24]) assert.ok(content.includes(`${count} working sets`));
@@ -196,7 +196,166 @@ t('migration save failure retains loaded history and the reviewed program in mem
   const d = legacyData(); const past = GT.newWorkout(d, d.days[0]); past.endedAt = Date.now(); d.workouts.push(past);
   const app = bootApp(d, true);
   assert.equal(vm.runInContext('D.workouts[0].id', app.context), past.id);
-  assert.equal(vm.runInContext('D.version', app.context), 3);
+  assert.equal(vm.runInContext('D.version', app.context), 4);
   assert.equal(app.stored().version, 2);
+});
+
+
+// ---- Compact training tools ----
+const change = (app, dataset, value, extra = {}) => app.events.change({ target: { dataset, value, checked: false, hasAttribute: name => Object.hasOwn(extra, name), ...extra } });
+t('one top-range set cannot satisfy a three-set prescription, even after deleting rows', () => {
+  const e = { ...upper, sets: 3 };
+  assert.equal(GT.suggest(e, sets(20, 14), S).action, 'keep');
+  assert.equal(GT.suggest(e, sets(20, 14, 14, 14), S).action, 'up');
+  assert.equal(GT.suggest(e, sets(20, 14, 14), S, 3).action, 'keep');
+});
+t('optional effort holds an increase at failure but does not invent missing effort', () => {
+  for (const [rir, action] of [[0, 'keep'], [1, 'up'], [2, 'up'], [null, 'up']]) {
+    const prev = sets(20, 14, 14, 14); prev[2].rir = rir;
+    assert.equal(GT.suggest({ ...upper, sets: 3 }, prev, S).action, action);
+  }
+  assert.equal(GT.effortValue(''), null); assert.equal(GT.effortValue('bad'), null); assert.equal(GT.effortValue('0'), 0);
+});
+t('warm-up rows do not block progression or count as required working sets', () => {
+  const prev = sets(20, 14, 14, 14).concat([{weightKg: 5, reps: 3, done: false, warmup: true}]);
+  assert.equal(GT.suggest({ ...upper, sets: 3 }, prev, S).action, 'up');
+});
+t('exercise increments support fractional dumbbells and machine steps larger than the general cap', () => {
+  assert.equal(GT.suggest({ ...upper, loadStepKg: 0.25 }, sets(4, 14, 14), S).weightKg, 4.25);
+  assert.equal(GT.suggest({ ...upper, loadStepKg: 5 }, sets(40, 14, 14), S).weightKg, 45);
+  assert.equal(GT.suggest({ ...upper, loadStepKg: 0.25 }, sets(4.25, 8), S).altKg, 4);
+  assert.equal(GT.suggest({ ...upper, loadStepKg: 5, assisted: true }, sets(2.5, 14, 14), S).weightKg, 0);
+  assert.equal(GT.stepFor({loadStepKg: 0.25}, S), 0.25);
+});
+t('dead bugs receive control guidance rather than a generic load increase', () => {
+  const e = GT.emptyData().exercises.find(e => e.name === 'Dead bug (per side)');
+  const result = GT.suggest(e, sets(0, 10, 10, 10), S);
+  assert.equal(result.action, 'control'); assert.equal(result.weightKg, null);
+});
+t('a shorter previous session does not trigger a load increase for a longer next session', () => {
+  const d = GT.emptyData(), w = GT.newWorkout(d, d.days[0], {sessionMinutes: 30}); w.endedAt = Date.now();
+  const e = w.exercises.find(e => e.name === 'Dumbbell bench press'); assert.ok(e);
+  w.sets.filter(s => s.exerciseId === e.id).forEach(s => {s.weightKg = 20; s.reps = 10; s.done = true;}); d.workouts.push(w);
+  const next = GT.newWorkout(d, d.days[0]).exercises.find(x => x.id === e.id);
+  assert.equal(GT.progressionFor(d, next).action, 'keep');
+});
+t('a weight-basis change does not carry old loads into prefill or progression', () => {
+  const d = GT.emptyData(), w = GT.newWorkout(d, d.days[0]); w.endedAt = Date.now();
+  const bench = d.exercises.find(e => e.name === 'Dumbbell bench press');
+  w.sets.filter(s => s.exerciseId === bench.id).forEach(s => {s.weightKg = 40; s.reps = 10; s.done = true;}); d.workouts.push(w);
+  bench.loadMode = 'total';
+  assert.equal(GT.newWorkout(d, d.days[0]).sets.find(s => s.exerciseId === bench.id).weightKg, 0);
+  assert.equal(GT.progressionFor(d, bench).action, 'none');
+  assert.equal(w.exercises.find(e => e.id === bench.id).loadMode, 'each');
+});
+t('session options respect the time estimate, valid sets and enabled exercises without editing the template', () => {
+  const d = GT.emptyData(), before = JSON.stringify(d);
+  for (const goal of Object.keys(GT.GOALS)) for (const minutes of [0, 30, 45, 60]) for (const day of d.days) {
+    const plan = GT.sessionPlan(d, day, {goal, sessionMinutes: minutes});
+    if (minutes) assert.ok(plan.estimatedMinutes <= minutes, `${goal} ${minutes} ${day.name}`);
+    assert.ok(plan.exercises.some(e => e.timed)); assert.ok(plan.exercises.some(e => !e.timed));
+    plan.exercises.forEach(e => {assert.ok(e.sets >= 1); assert.equal(e.sets, e.plannedSets); assert.ok(day.items.some(i => i.enabled && i.exerciseId === e.id));});
+  }
+  assert.equal(JSON.stringify(d), before);
+  const full = GT.sessionPlan(d, d.days[0]); assert.equal(full.exercises.filter(e=>!e.timed).reduce((sum,e)=>sum+e.sets,0),21);
+  const short = GT.sessionPlan(d, d.days[0], {sessionMinutes:30});
+  for (const movement of ['push', 'pull']) assert.ok(short.exercises.some(e => e.movement === movement));
+  assert.ok(short.exercises.some(e => ['squat', 'hinge'].includes(e.movement)));
+});
+t('goal options add at most one priority set, cap it at four, and lengthen main-lift rest for strength', () => {
+  const d = GT.emptyData(), day = d.days[0], bench = d.exercises.find(e => e.name === 'Dumbbell bench press');
+  let plan = GT.sessionPlan(d, day, {goal:'muscle', priorityRegion:'chest'});
+  assert.equal(plan.exercises.find(e => e.id === bench.id).sets, 4);
+  assert.equal(plan.exercises.reduce((sum,e)=>sum+e.sets,0),23); // 21 work + 1 added + 1 warm-up.
+  bench.sets=4; plan = GT.sessionPlan(d,day,{goal:'muscle',priorityRegion:'chest'}); assert.equal(plan.exercises.find(e=>e.id===bench.id).sets,4);
+  assert.equal(GT.sessionPlan(d,day,{goal:'strength'}).exercises.find(e=>e.id===bench.id).restSec,150);
+});
+t('session swaps use a matching movement, retain slot sets and use the target exercise history', () => {
+  const d = GT.emptyData(), target = d.exercises.find(e=>e.name==='Machine chest press');
+  const prior = GT.newWorkout(d,{id:'test',name:'Machine',items:[{exerciseId:target.id,enabled:true}]}); prior.endedAt=Date.now();
+  prior.sets.forEach(s=>{s.weightKg=35;s.reps=8;s.done=true;}); d.workouts.push(prior);
+  const w = GT.newWorkout(d,d.days[0],{sessionMinutes:30}), source=w.exercises.find(e=>e.name==='Dumbbell bench press');
+  assert.ok(!GT.swapCandidates(d,w,source).some(e=>e.name==='Seated leg curl'));
+  const template=JSON.stringify(d.days); assert.ok(GT.swapExercise(d,w,source.id,target.id));
+  const replacement=w.exercises.find(e=>e.id===target.id); assert.equal(replacement.plannedSets,source.plannedSets); assert.equal(replacement.loadMode,'stack');
+  assert.equal(w.sets.find(s=>s.exerciseId===target.id).weightKg,35); assert.equal(w.sets.find(s=>s.exerciseId===target.id).reps,8);
+  assert.ok(!w.sets.some(s=>s.exerciseId===source.id)); assert.equal(JSON.stringify(d.days),template);
+  w.sets.find(s=>s.exerciseId===target.id).done=true; const before=JSON.stringify(w);
+  assert.equal(GT.swapExercise(d,w,target.id,source.id),false); assert.equal(JSON.stringify(w),before);
+});
+t('weekly coverage counts direct and indirect work, ignores warm-ups and unfinished sets, and counts calendar days once', () => {
+  const d=GT.emptyData(), now=+new Date(2026,8,5,12), bench=d.exercises.find(e=>e.name==='Dumbbell bench press');
+  const make=(id,date)=>{const w=GT.newWorkout(d,{id:'day',name:'Test',items:[{exerciseId:bench.id,enabled:true}]}); w.id=id;w.startedAt=date;w.endedAt=date+1000;return w;};
+  const one=make('one',now-3600000); one.sets[0].done=true;one.sets[1].done=true;one.sets[1].warmup=true;
+  const two=make('two',now-7200000);two.sets[0].done=true;
+  const old=make('old',+new Date(2026,7,29,23,59));old.sets.forEach(s=>s.done=true);
+  const future=make('future',now+1000);future.sets.forEach(s=>s.done=true);
+  d.workouts.push(one,two,old,future); d.activeWorkout=two; // A duplicate ID must not count twice.
+  let result=GT.weekCoverage(d,now); const chest=result.regions.find(r=>r.region==='chest'), triceps=result.regions.find(r=>r.region==='triceps');
+  assert.equal(result.totalSets,2); assert.equal(result.days,1); assert.equal(chest.direct,2); assert.equal(chest.indirect,0); assert.equal(chest.days,1); assert.equal(triceps.indirect,2);
+  bench.primary=['quads']; assert.equal(GT.weekCoverage(d,now).regions.find(r=>r.region==='chest').direct,2); // Snapshot, not edited library.
+});
+t('weekly coverage reports unclassified exercises instead of guessing from upper/lower tags', () => {
+  const d=GT.emptyData(), now=Date.now();
+  d.activeWorkout={id:'x',startedAt:now,exercises:[{id:'unknown',name:'My exercise',tag:'upper'}],sets:[{exerciseId:'unknown',reps:10,done:true}]};
+  const c=GT.weekCoverage(d,now); assert.equal(c.unclassified,1);assert.equal(c.totalSets,1);assert.ok(c.regions.every(r=>r.direct===0&&r.indirect===0));
+});
+t('v3 migration enriches the library without reinterpreting old loads or modifying active/history snapshots', () => {
+  const d=Object.assign(GT.emptyData(), GT.defaultProgram(3)); d.version=3;
+  const bench=d.exercises.find(e=>e.name==='Dumbbell bench press');
+  const w={id:'past',startedAt:1,endedAt:2,exercises:[{id:bench.id,name:bench.name,sets:3}],sets:[{exerciseId:bench.id,weightKg:40,reps:10,done:true}]};
+  d.workouts=[w];d.activeWorkout=JSON.parse(JSON.stringify(w));d.activeWorkout.id='active';d.activeWorkout.endedAt=null;
+  const before=JSON.stringify([d.days,d.workouts,d.activeWorkout]);GT.migrate(d);
+  assert.equal(bench.loadMode,'unspecified');assert.equal(bench.loadStepKg,1);assert.deepEqual(bench.primary,['chest']);
+  assert.equal(JSON.stringify([d.days,d.workouts,d.activeWorkout]),before);
+  const once=JSON.stringify(d);GT.migrate(d);assert.equal(JSON.stringify(d),once);
+});
+t('CSV preserves fractional loads, zero effort, blank effort, and explicit weight basis', () => {
+  const d=GT.emptyData();GT.importHistory(d,GT.parseHistory('date,exercise,set,kg,reps,rir,load_mode\n2026-09-01,Dumbbell bench press,1,4.25,10,0,each\n2026-09-01,Dumbbell bench press,2,4.25,10,,each'));
+  const copy=GT.emptyData();GT.importHistory(copy,GT.parseHistory(GT.historyToCSV(d)));
+  assert.equal(copy.workouts[0].sets[0].weightKg,4.25);assert.equal(copy.workouts[0].sets[0].rir,0);assert.equal(copy.workouts[0].sets[1].rir,null);assert.equal(copy.workouts[0].exercises[0].loadMode,'each');assert.equal(copy.workouts[0].exercises[0].plannedSets,2);
+});
+t('new controls are collapsed by default, retain disclosure state, and persist time/goal choices', () => {
+  const app=bootApp(GT.emptyData()); let content=app.elements.get('#view').innerHTML;
+  assert.ok(content.includes('data-panel="coverage"'));assert.ok(!content.includes('data-panel="coverage" open'));
+  app.document.querySelectorAll=selector=>selector==='details[data-panel]'?[{dataset:{panel:'session-options'},open:true}]:[];
+  change(app,{sf:'sessionMinutes'},'30');content=app.elements.get('#view').innerHTML;
+  assert.ok(content.includes('data-panel="session-options" open'));assert.equal(app.stored().settings.sessionMinutes,30);
+  vm.runInContext("go('program')",app.context);change(app,{sf:'goal'},'muscle');change(app,{sf:'priorityRegion'},'hamstrings');
+  assert.equal(app.stored().settings.goal,'muscle');assert.equal(app.stored().settings.priorityRegion,'hamstrings');
+});
+t('workout controls record optional effort, use fractional steps and label reps per side', () => {
+  const d=GT.emptyData(), e=d.exercises.find(e=>e.name==='Pallof press');e.loadStepKg=.25;
+  d.activeWorkout=GT.newWorkout(d,{id:'day',name:'Test',items:[{exerciseId:e.id,enabled:true}]});const app=bootApp(d);
+  assert.ok(app.elements.get('#view').innerHTML.includes('reps / side'));assert.ok(app.elements.get('#view').innerHTML.includes('kg stack'));
+  change(app,{f:'rir'},'0');assert.equal(app.stored().activeWorkout.sets[0].rir,0);
+  change(app,{f:'weightKg'},'4.25');assert.equal(app.stored().activeWorkout.sets[0].weightKg,4.25);
+  const el={dataset:{act:'step',f:'weightKg',d:'0.25'}};app.events.click({target:{closest:sel=>sel==='nav button'?null:el}});
+  assert.equal(app.stored().activeWorkout.sets[0].weightKg,4.5);
+  change(app,{f:'rir'},'');assert.equal(app.stored().activeWorkout.sets[0].rir,null);
+});
+t('current-session weight-basis selection clears ambiguous prefills and preserves history', () => {
+  const d=GT.emptyData(),e=d.exercises.find(e=>e.name==='Dumbbell bench press');e.loadMode='unspecified';
+  const w=GT.newWorkout(d,d.days[0]);w.endedAt=Date.now();w.sets.filter(s=>s.exerciseId===e.id).forEach(s=>{s.done=true;s.weightKg=40;});d.workouts.push(w);
+  d.activeWorkout=GT.newWorkout(d,{id:'day',name:'Test',items:[{exerciseId:e.id,enabled:true}]});const app=bootApp(d), before=JSON.stringify(d.workouts);
+  change(app,{},'each',{'data-current-mode':true});
+  assert.equal(app.stored().activeWorkout.exercises[0].loadMode,'each');assert.equal(app.stored().activeWorkout.sets[0].weightKg,0);assert.equal(JSON.stringify(app.stored().workouts),before);
+});
+
+
+t('typing numbers saves immediately without requiring blur', () => {
+  const d=GT.emptyData(); d.activeWorkout=GT.newWorkout(d,d.days[0]); d.activeWorkout.cursor={ex:1,set:0}; const app=bootApp(d);
+  for (const [f,value] of [['weightKg','4.25'],['reps','8']]) app.events.input({target:{dataset:{f},value,hasAttribute:()=>false}});
+  const saved=app.stored().activeWorkout.sets.filter(s=>s.exerciseId===d.activeWorkout.exercises[1].id)[0];
+  assert.equal(saved.weightKg,4.25);assert.equal(saved.reps,8);
+});
+t('mixed CSV weight bases are rejected before changing any stored data', () => {
+  const d=GT.emptyData(), before=JSON.stringify(d);
+  const rows=GT.parseHistory('date,exercise,sets,reps,kg,load_mode\n2026-09-01,Dumbbell bench press,1,10,10,each\n2026-09-01,Dumbbell bench press,1,10,20,total');
+  assert.throws(()=>GT.importHistory(d,rows),/one weight basis/);assert.equal(JSON.stringify(d),before);
+});
+t('timed warm-up screen has no empty details control', () => {
+  const d=GT.emptyData();d.activeWorkout=GT.newWorkout(d,d.days[0]);const app=bootApp(d);
+  assert.ok(!app.elements.get('#view').innerHTML.includes('Exercise details'));
 });
 console.log(`\n${n} tests passed`);
